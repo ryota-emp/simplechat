@@ -1,10 +1,24 @@
 # lambda/index.py
+
 import json
 import os
-import boto3
+import urllib.request
+import urllib.error
+from typing import List, Dict, Optional
 import re  # 正規表現モジュールをインポート
-from botocore.exceptions import ClientError
+#import boto3
+#from botocore.exceptions import ClientError
 
+# FastAPI endpoint
+API_ENDPOINT = "https://926e-34-143-181-45.ngrok-free.app/generate"
+
+# Default generation parameters
+DEFAULT_PARAMS = {
+    "max_new_tokens": 512,
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "do_sample": True
+}
 
 # Lambda コンテキストからリージョンを抽出する関数
 def extract_region_from_arn(arn):
@@ -20,7 +34,125 @@ bedrock_client = None
 # モデルID
 MODEL_ID = os.environ.get("MODEL_ID", "us.amazon.nova-lite-v1:0")
 
+
 def lambda_handler(event, context):
+    try:
+        # リクエストボディの解析
+        body = json.loads(event['body'])
+        message = body['message']
+        conversation_history = body.get('conversationHistory', [])
+
+        print("Processing message:", message)
+
+        # 会話履歴を文字列に変換
+        conversation_text = ""
+        for msg in conversation_history:
+            role = msg["role"]
+            content = msg["content"]
+            conversation_text += f"{role}: {content}\n"
+
+        # 最新のメッセージを追加
+        prompt = f"{conversation_text}user: {message}\nassistant:"
+
+        # FastAPIリクエストの準備
+        request_payload = {
+            "prompt": prompt,
+            **DEFAULT_PARAMS
+        }
+
+        print("Calling FastAPI endpoint with payload:",
+              json.dumps(request_payload))
+
+        # FastAPI エンドポイントを呼び出し
+        request_data = json.dumps(request_payload).encode('utf-8')
+        req = urllib.request.Request(
+            API_ENDPOINT,
+            data=request_data,
+            headers={'Content-Type': 'application/json'}
+        )
+
+        with urllib.request.urlopen(req) as response:
+            response_data = json.loads(response.read().decode('utf-8'))
+            print("FastAPI response:", json.dumps(response_data))
+
+        # 生成されたテキストを取得
+        assistant_response = response_data['generated_text'].strip()
+
+        # 会話履歴を更新
+        messages = conversation_history.copy()
+        messages.append({
+            "role": "user",
+            "content": message
+        })
+        messages.append({
+            "role": "assistant",
+            "content": assistant_response
+        })
+
+        # レスポンスを返却
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Methods": "OPTIONS,POST"
+            },
+            "body": json.dumps({
+                "success": True,
+                "response": assistant_response,
+                "conversationHistory": messages
+            })
+        }
+
+    except urllib.error.URLError as error:
+        print("API Request Error:", str(error))
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Methods": "OPTIONS,POST"
+            },
+            "body": json.dumps({
+                "success": False,
+                "error": f"API Request Error: {str(error)}"
+            })
+        }
+    except json.JSONDecodeError as error:
+        print("JSON Decode Error:", str(error))
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Methods": "OPTIONS,POST"
+            },
+            "body": json.dumps({
+                "success": False,
+                "error": f"JSON Decode Error: {str(error)}"
+            })
+        }
+    except Exception as error:
+        print("Error:", str(error))
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Methods": "OPTIONS,POST"
+            },
+            "body": json.dumps({
+                "success": False,
+                "error": str(error)
+            })
+        }
+
+"""
+def original_lambda_handler(event, context):
     try:
         # コンテキストから実行リージョンを取得し、クライアントを初期化
         global bedrock_client
@@ -138,3 +270,5 @@ def lambda_handler(event, context):
                 "error": str(error)
             })
         }
+"""
+
